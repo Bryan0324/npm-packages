@@ -1,0 +1,61 @@
+name: Publish NPM Packages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Publish packages
+        run: |
+          #!/bin/bash
+          # Find all package.json files recursively
+          find . -name "package.json" -type f | while read -r package_file; do
+            dir=$(dirname "$package_file")
+            dir=${dir#./}
+            dir=${dir%/}
+            
+            # Skip root package.json if present
+            if [ "$dir" = "." ]; then
+              continue
+            fi
+            
+            # Check if package.json has a "name" field
+            if jq -e '.name' "$package_file" > /dev/null 2>&1; then
+              echo "Publishing package: $dir"
+              (
+                cd "$dir"
+                npm publish
+                if [ $? -eq 0 ]; then
+                  echo "✓ Successfully published $dir"
+                else
+                  echo "✗ Failed to publish $dir"
+                  exit 1
+                fi
+              )
+              if [ $? -ne 0 ]; then
+                exit 1
+              fi
+            else
+              echo "Skipping $dir - no name field in package.json"
+            fi
+          done

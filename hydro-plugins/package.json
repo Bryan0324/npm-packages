@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "@hydrooj/ui-default": "^4.58.0-beta.16",
+    "hydrooj": "^5.0.0-beta.15",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "semver": "^7.7.3",
+    "validate-npm-package-name": "^7.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/semver": "^7.7.1",
+    "@types/validate-npm-package-name": "^4.0.2"
+  }
+}

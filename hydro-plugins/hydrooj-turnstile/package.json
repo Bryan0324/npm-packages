@@ -1,0 +1,12 @@
+{
+  "name": "hydrooj-turnstile",
+  "version": "0.1.1",
+  "description": "turnstile for hydrooj",
+  "main": "index.ts",
+  "author": "https://github.com/Bryan0324",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "hydrooj": "^5.0.0-beta.15"
+  }
+}
