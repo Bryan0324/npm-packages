@@ -44,6 +44,7 @@ jobs:
               echo "Publishing package: $dir"
               (
                 cd "$dir"
+                npm ci
                 npm publish
                 if [ $? -eq 0 ]; then
                   echo "✓ Successfully published $dir"
