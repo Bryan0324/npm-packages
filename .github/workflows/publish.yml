@@ -82,10 +82,6 @@ jobs:
                 else
                   EXIT_CODE=$?
                   echo "✗ Failed to publish $dir (exit code: $EXIT_CODE)"
-                  echo "Debug: npm whoami"
-                  npm whoami 2>&1 || echo "  (Not authenticated)"
-                  echo "Debug: package.json repository field:"
-                  jq '.repository' package.json 2>&1
                 fi
               )
             else
