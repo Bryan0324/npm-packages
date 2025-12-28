@@ -76,6 +76,13 @@ jobs:
                 # Ensure we use OIDC (Trusted Publishers) rather than legacy tokens
                 unset NODE_AUTH_TOKEN || true
 
+                # Debug: Check npm config and OIDC environment
+                echo "=== npm config ==="
+                npm config get registry
+                npm config get @npm:registry
+                echo "=== Environment check ==="
+                env | grep -i "ACTIONS_ID" || echo "No ACTIONS_ID_* vars found"
+                
                 # Publish with error capture and diagnostics
                 if npm publish --provenance $ACCESS_ARG 2>&1; then
                   echo "✓ Successfully published $dir"
