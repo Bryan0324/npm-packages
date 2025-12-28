@@ -76,12 +76,17 @@ jobs:
                 # Ensure we use OIDC (Trusted Publishers) rather than legacy tokens
                 unset NODE_AUTH_TOKEN || true
 
-                npm publish --provenance $ACCESS_ARG
-                if [ $? -eq 0 ]; then
+                # Publish with error capture and diagnostics
+                if npm publish --provenance $ACCESS_ARG 2>&1; then
                   echo "✓ Successfully published $dir"
                 else
-                  echo "✗ Failed to publish $dir"
-                  exit 1
+                  EXIT_CODE=$?
+                  echo "✗ Failed to publish $dir (exit code: $EXIT_CODE)"
+                  echo "Debug: npm whoami"
+                  npm whoami 2>&1 || echo "  (Not authenticated)"
+                  echo "Debug: package.json repository field:"
+                  jq '.repository' package.json 2>&1
+                  exit $EXIT_CODE
                 fi
               )
               if [ $? -ne 0 ]; then
