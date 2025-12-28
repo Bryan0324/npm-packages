@@ -58,7 +58,7 @@ jobs:
                 fi
 
                 # Ensure repository field points to this repo and subdirectory
-                REPO_URL="https://github.com/Bryan0324/npm-packages.git"
+                REPO_URL="git+https://github.com/Bryan0324/npm-packages.git"
                 REPO_DIR="$dir"
                 CUR_DIR=$(jq -r '.repository.directory // empty' package.json)
                 CUR_URL=$(jq -r '.repository.url // empty' package.json)
@@ -70,6 +70,9 @@ jobs:
                 else
                   echo "Repository field already set correctly"
                 fi
+
+                # Ensure we use OIDC (Trusted Publishers) rather than legacy tokens
+                unset NODE_AUTH_TOKEN || true
 
                 npm publish --provenance $ACCESS_ARG
                 if [ $? -eq 0 ]; then
