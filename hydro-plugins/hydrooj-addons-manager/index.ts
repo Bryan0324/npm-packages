@@ -43,9 +43,11 @@ class AddonsManagerHandler extends Handler {
         for(const pkg of packages){
             if(checkPackageIsLocal(pkg)) lockedPackages.push(pkg);
         }
+        console.log(this.request);
         this.response.body = this.request.body ||{
             packages: packages,
             lockedPackages: lockedPackages,
+            success: null,
             result: null
         };
         this.renderHTML(this.response.template, {title: 'manage_addons'});
@@ -53,7 +55,7 @@ class AddonsManagerHandler extends Handler {
     async post()
     {
         const body = this.request.body;
-        const packages = await AddonsManagerHandler.model.getActivedPackages();
+        let packages = await AddonsManagerHandler.model.getActivedPackages();
         let lockedPackages = await AddonsManagerHandler.model.getLockedPackages();
         for(const pkg of packages){
             if(checkPackageIsLocal(pkg)) lockedPackages.push(pkg);
@@ -93,15 +95,22 @@ class AddonsManagerHandler extends Handler {
         // optional: better log formatting
         console.log(`[Addons Manager] Action=${pkg.action} Package=${pkg.name} Version=${pkg.version} Result=${JSON.stringify(result)}`);
         if(result.success){
-            this.back({
-                result: result, 
+            packages = await AddonsManagerHandler.model.getActivedPackages();
+            lockedPackages = await AddonsManagerHandler.model.getLockedPackages();
+            this.response.template = 'manage_addons.html';
+            for(const pkg of packages){
+                if(checkPackageIsLocal(pkg)) lockedPackages.push(pkg);
+            }
+            this.response.body = {
                 packages: packages,
-                lockedPackages: lockedPackages
-            });
+                lockedPackages: lockedPackages,
+                success: result.success,
+                result: result.message || 'Operation successful'
+            };
+            this.renderHTML(this.response.template, {title: 'manage_addons'});
         }else {
             throw new UserFacingError(result.message || 'Operation failed');
         }
-        
     }
 }
 

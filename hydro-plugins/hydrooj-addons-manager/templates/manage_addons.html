@@ -127,18 +127,17 @@
             <button type="submit" name="action" value="add" class="btn btn--primary">{{ _('activate') }}</button>
         </div>
         </form>
-    {% if result %}
-    {% if result.success %}
-    <div class="alert alert--success">
-        {{ result.success }}
-    </div>
-    {% else %}
-    <div class="alert alert--danger">
-        {{ result.error }}
-    </div>
-    {% endif %}
-    {% endif %}
     </div>
     </div>
 </div>
+<script>
+    const result = {{ result | dump | safe }};
+    console.log('Debug: ', result);
+</script>
+{% if success and result %}
+<script>
+    const message = {{ result | dump | safe }};
+    alert('✓ success:  ' + message);
+</script>
+{% endif %}
 {% endblock %}

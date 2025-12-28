@@ -13,8 +13,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ vars.PUBLISH_ENV || 'publish' }}
     steps:
       - uses: actions/checkout@v4
 
