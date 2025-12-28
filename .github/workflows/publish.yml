@@ -22,28 +22,10 @@ jobs:
           node-version: '18'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Get OIDC ID token
-        id: oidc
-        shell: bash
-        env:
-          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE }}
-        run: |
-          AUD="${OIDC_AUDIENCE:-sts.amazonaws.com}"
-          TOKEN_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUD}"
-          ID_TOKEN=$(curl -s -H "Authorization: bearer ${ACTIONS_RUNTIME_TOKEN}" "${TOKEN_URL}" | jq -r '.value')
-          if [ -z "$ID_TOKEN" ] || [ "$ID_TOKEN" = "null" ]; then
-            echo "Failed to retrieve OIDC ID token"
-            exit 1
-          fi
-          echo "::add-mask::$ID_TOKEN"
-          echo "id_token=$ID_TOKEN" >> "$GITHUB_OUTPUT"
-
       - name: Install dependencies
         run: npm install
 
       - name: Publish packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           #!/bin/bash
           # Find all package.json files recursively
@@ -62,7 +44,34 @@ jobs:
               echo "Publishing package: $dir"
               (
                 cd "$dir"
-                npm publish
+                # Install with lockfile if available; fallback to install
+                if [ -f package-lock.json ]; then
+                  npm ci
+                else
+                  npm install
+                fi
+
+                name=$(jq -r '.name' package.json)
+                ACCESS_ARG=""
+                if [[ "$name" == @*/* ]]; then
+                  ACCESS_ARG="--access public"
+                fi
+
+                # Ensure repository field points to this repo and subdirectory
+                REPO_URL="https://github.com/Bryan0324/npm-packages.git"
+                REPO_DIR="$dir"
+                CUR_DIR=$(jq -r '.repository.directory // empty' package.json)
+                CUR_URL=$(jq -r '.repository.url // empty' package.json)
+                if [ "$CUR_DIR" != "$REPO_DIR" ] || [ "$CUR_URL" != "$REPO_URL" ]; then
+                  tmpfile=$(mktemp)
+                  jq --arg url "$REPO_URL" --arg d "$REPO_DIR" \
+                    '.repository = {type:"git", url:$url, directory:$d}' package.json > "$tmpfile" && mv "$tmpfile" package.json
+                  echo "Updated repository field: url=$REPO_URL directory=$REPO_DIR"
+                else
+                  echo "Repository field already set correctly"
+                fi
+
+                npm publish --provenance $ACCESS_ARG
                 if [ $? -eq 0 ]; then
                   echo "✓ Successfully published $dir"
                 else
