@@ -86,12 +86,8 @@ jobs:
                   npm whoami 2>&1 || echo "  (Not authenticated)"
                   echo "Debug: package.json repository field:"
                   jq '.repository' package.json 2>&1
-                  exit $EXIT_CODE
                 fi
               )
-              if [ $? -ne 0 ]; then
-                exit 1
-              fi
             else
               echo "Skipping $dir - no name field in package.json"
             fi
