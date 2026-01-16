@@ -1,4 +1,4 @@
-import { addPage, NamedPage } from '@hydrooj/ui-default';
+import { addPage, NamedPage, AutoloadPage } from '@hydrooj/ui-default';
 
 function getElementByXpath(path: string): HTMLElement | null {
     return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as HTMLElement | null;
@@ -53,16 +53,7 @@ function renderTurnstile(document: Document, summitXpath: string, containerXpath
   }
 }
 
-addPage(new NamedPage(['user_register'], () => {
-    renderTurnstile(document, '//*[@id="submit"]', '//*[@id="panel"]/div[4]/div/div/div/form', UiContext);
-}));
-
-
-addPage(new NamedPage(['discussion_create'], () => {
-    renderTurnstile(document, '//*[@id="panel"]/div[3]/div/div[1]/div/div[2]/form/div[3]/div/button[1]', '//*[@id="panel"]/div[3]/div/div[1]/div/div[2]/form/div[3]/div', UiContext);
-}));
-
-
-addPage(new NamedPage(['blog_edit'], () => {
-    renderTurnstile(document, '//*[@id="panel"]/div[3]/div/div[1]/div/div/form/div[3]/div/button[1]', '//*[@id="panel"]/div[3]/div/div[1]/div/div/form/div[3]/div', UiContext);
+addPage(new AutoloadPage('turnstile_init', () => {
+  if(!UiContext.turnstileKey)return;
+  renderTurnstile(document, UiContext.summitXpath, UiContext.containerXpath, UiContext);
 }));

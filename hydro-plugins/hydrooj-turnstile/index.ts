@@ -2,10 +2,19 @@ import {
     Context, Handler, PRIV, Schema, Service, superagent, SystemModel, TokenModel, UserFacingError, ValidationError, ForbiddenError, Type
 } from 'hydrooj';
 
-async function turnstileHandler(thisArg: Handler, config: ReturnType<typeof TurnstileService.Config>) {
+function snakeCaseToBigCamelCase(str: string): string {
+    return str
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join('');
+}
+
+async function turnstileHandler(thisArg: Handler, config: ReturnType<typeof TurnstileService.Config>, summitXpath: string, containerXpath: string) {
     if (!config.key) return;
     if (thisArg.request.method !== 'post') {
         thisArg.UiContext.turnstileKey = config.key;
+        thisArg.UiContext.summitXpath = summitXpath;
+        thisArg.UiContext.containerXpath = containerXpath;
         return;
     }
     const token = thisArg.request.body['cf-turnstile-response'];
@@ -35,16 +44,45 @@ async function turnstileHandler(thisArg: Handler, config: ReturnType<typeof Turn
     }
 }
 
+const turnstileUnit = Schema.object({
+    pageKeyData: Schema.string().description('data-page attribute of the page').required(),
+    summitXpath: Schema.string().description('the Xpath of the submit button of the page').required(),
+    containerXpath: Schema.string().description('the Xpath of the container element for Turnstile').required()
+});
+
 export default class TurnstileService extends Service {
     static Config = Schema.object({
         key: Schema.string().description('Turnstile key').required(),
         secret: Schema.string().description('Turnstile Secret').role('secret').required(),
+        registration: Schema.array(turnstileUnit).description('Registration pages for Turnstile').default([
+            {
+                pageKeyData: 'user_register',
+                summitXpath: '//*[@id="submit"]',
+                containerXpath: '//*[@id="panel"]/div[4]/div/div/div/form'
+            },
+            {
+                pageKeyData: 'discussion_create',
+                summitXpath: '//*[@id="panel"]/div[3]/div/div[1]/div/div[2]/form/div[3]/div/button[1]',
+                containerXpath: '//*[@id="panel"]/div[3]/div/div[1]/div/div[2]/form/div[3]/div'
+            },
+            {
+                pageKeyData: 'blog_edit',
+                summitXpath: '//*[@id="panel"]/div[3]/div/div[1]/div/div/form/div[3]/div/button[1]',
+                containerXpath: '//*[@id="panel"]/div[3]/div/div[1]/div/div/form/div[3]/div'
+            },
+            {
+                pageKeyData: 'problem_create',
+                summitXpath: '//*[@id="panel"]/div[3]/div/div[1]/div/div/form/div[5]/div/button',
+                containerXpath: '//*[@id="panel"]/div[3]/div/div[1]/div/div/form/div[5]/div'
+            },
+        ]),
     });
 
     constructor(ctx: Context, config: ReturnType<typeof TurnstileService.Config>) {
         super(ctx, 'hydrooj-turnstile');
-        ctx.on('handler/before/DiscussionCreate', async (thisArg) => turnstileHandler.call(this, thisArg, config));
-        ctx.on('handler/before/UserRegister', async (thisArg) => turnstileHandler.call(this, thisArg, config));
-        ctx.on('handler/before/BlogEdit', async (thisArg) => turnstileHandler.call(this, thisArg, config));
+        for(const unit of config.registration) {
+            ctx.on(`handler/before/${snakeCaseToBigCamelCase(unit.pageKeyData)}`, async (thisArg) => turnstileHandler.call(this, thisArg, config, unit.summitXpath, unit.containerXpath));
+        }
     }
 }
+
