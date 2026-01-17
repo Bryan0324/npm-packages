@@ -1,6 +1,6 @@
 {
   "name": "hydrooj-turnstile",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "turnstile for hydrooj",
   "main": "index.ts",
   "author": "https://github.com/Bryan0324",
