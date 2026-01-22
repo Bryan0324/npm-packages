@@ -22,3 +22,6 @@ yarn-error.log*
 .env.local
 .env.*.local
 .env.test.local
+
+# Temporary files
+hydro-plugins/tmp

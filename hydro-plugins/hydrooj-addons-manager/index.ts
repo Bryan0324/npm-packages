@@ -6,128 +6,201 @@ import {
     Model,
     requireSudo
 } from 'hydrooj';
-import { exec, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import semver from 'semver';
 import validatePackageName from 'validate-npm-package-name';
-type CommandResult = {success: boolean, message?: string};
-type PackageInfo = {name: string, version: string};
+
+// Constants
+const ADDON_JSON = 'addon.json';
+const ADDON_LOCKED_JSON = 'addon-locked.json';
+const ADDONS_DIR = 'addons/';
+const TEMPLATE_NAME = 'manage_addons.html';
+const ROUTE_PATH = '/manage/addons';
+const DEFAULT_BRANCH = 'main';
+const LOG_PREFIX = '[Addons Manager]';
+
+// Types
+type CommandResult = { success: boolean; message?: string };
+type PackageInfo = { name: string; version: string };
 type PackageAction = 'add' | 'delete' | 'update';
-type PackageOperation = PackageInfo & {action: PackageAction};
+type PackageOperation = PackageInfo & { action: PackageAction };
+type ManagerResponse = {
+    packages: string[];
+    lockedPackages: string[];
+    success: boolean | null;
+    result: string | null;
+};
 
 type AddonsManagerModel = {
-    manageAddon: (action: PackageAction, name: string, version?: string) => Promise<CommandResult>,
-    localUpdate: (name: string) => Promise<CommandResult>,
-    getActivedPackages: () => Promise<string[]>,
-    getLockedPackages: () => Promise<string[]>
+    manageAddon: (action: PackageAction, name: string, version?: string) => Promise<CommandResult>;
+    localUpdate: (name: string) => Promise<CommandResult>;
+    localDelete: (name: string) => Promise<CommandResult>;
+    localAdd: (name: string) => Promise<CommandResult>;
+    getActivedPackages: () => Promise<string[]>;
+    getLockedPackages: () => Promise<string[]>;
+    localPackageName: (name: string) => string;
 };
-function checkNpmPackageValidity(name : string): boolean {
-    return validatePackageName(name).validForNewPackages;
-}
-function checkNpmVersionValidity(name : string): boolean {
-    return name === '' || semver.valid(name) !== null;
-}
-function checkPackageIsLocal(name : string): boolean {
-    return name[0] === '/' && path.isAbsolute(name);
-}
+
+// Validators
+const PackageValidator = {
+    checkNpmPackageName(name: string): boolean {
+        return validatePackageName(name).validForNewPackages;
+    },
+    checkNpmVersion(version: string): boolean {
+        return version === '' || semver.valid(version) !== null;
+    },
+    checkPackageIsGitUrl(name: string): boolean {
+        return name.endsWith('.git') && (name.startsWith('http://') || name.startsWith('https://') || name.startsWith('git@'));
+    },
+    checkPackageIsLocal(name: string): boolean {
+        return (name[0] === '/' && path.isAbsolute(name)) || this.checkPackageIsGitUrl(name);
+    }
+};
 class AddonsManagerHandler extends Handler {
     private static model: AddonsManagerModel;
-    static setModel(m: AddonsManagerModel) { this.model = m; }
-    @requireSudo
-    async get()
-    {
-        this.response.template = 'manage_addons.html';
+
+    static setModel(m: AddonsManagerModel) { 
+        this.model = m; 
+    }
+
+    private async getManagerResponse(): Promise<ManagerResponse> {
         const packages = await AddonsManagerHandler.model.getActivedPackages();
-        let lockedPackages = await AddonsManagerHandler.model.getLockedPackages();
-        for(const pkg of packages){
-            if(checkPackageIsLocal(pkg)) lockedPackages.push(pkg);
-        }
-        console.log(this.request);
-        this.response.body = this.request.body ||{
-            packages: packages,
-            lockedPackages: lockedPackages,
+        const lockedPackages = await AddonsManagerHandler.model.getLockedPackages();
+        return {
+            packages,
+            lockedPackages,
             success: null,
             result: null
         };
-        this.renderHTML(this.response.template, {title: 'manage_addons'});
     }
-    async post()
-    {
-        const body = this.request.body;
-        let packages = await AddonsManagerHandler.model.getActivedPackages();
-        let lockedPackages = await AddonsManagerHandler.model.getLockedPackages();
-        for(const pkg of packages){
-            if(checkPackageIsLocal(pkg)) lockedPackages.push(pkg);
-        }
 
-        let pkg: PackageOperation = 
-        {
+    @requireSudo
+    async get() {
+        this.response.template = TEMPLATE_NAME;
+        const response = await this.getManagerResponse();
+        this.response.body = this.request.body || response;
+        this.renderHTML(this.response.template, { title: 'manage_addons' });
+    }
+
+    async post() {
+        const body = this.request.body;
+        const pkg: PackageOperation = {
             name: body['package_name'],
             version: body['package_version'] || '',
             action: body['action']
         };
 
-        // after computing packages, lockedPackages and building `pkg`
-        let result: CommandResult = { success: false, message: 'Unknown error' };
+        const result = await this.handlePackageOperation(pkg);
+        this.logOperation(pkg, result);
 
-        const isInstalled = packages.includes(pkg.name);
-        const isLocked = lockedPackages.includes(pkg.name);
-
-        if (checkPackageIsLocal(pkg.name)) {
-          if (pkg.action !== 'update') {
-            result = { success: false, message: 'Local packages can only be updated' };
-          } else {
-            result = await AddonsManagerHandler.model.localUpdate(pkg.name);
-          }
-        } else {
-          if (pkg.action === 'add' && isInstalled) {
-            result = { success: false, message: 'Package is already installed' };
-          } else if ((pkg.action === 'update' || pkg.action === 'delete') && !isInstalled) {
-            result = { success: false, message: 'Package is not installed' };
-          } else if (pkg.action === 'delete' && isLocked) {
-            result = { success: false, message: 'This package is locked and cannot be removed.' };
-          } else {
-            result = await AddonsManagerHandler.model.manageAddon(pkg.action, pkg.name, pkg.version);
-          }
-        }
-
-        // optional: better log formatting
-        console.log(`[Addons Manager] Action=${pkg.action} Package=${pkg.name} Version=${pkg.version} Result=${JSON.stringify(result)}`);
-        if(result.success){
-            packages = await AddonsManagerHandler.model.getActivedPackages();
-            lockedPackages = await AddonsManagerHandler.model.getLockedPackages();
-            this.response.template = 'manage_addons.html';
-            for(const pkg of packages){
-                if(checkPackageIsLocal(pkg)) lockedPackages.push(pkg);
-            }
+        if (result.success) {
+            const response = await this.getManagerResponse();
+            this.response.template = TEMPLATE_NAME;
             this.response.body = {
-                packages: packages,
-                lockedPackages: lockedPackages,
+                ...response,
                 success: result.success,
                 result: result.message || 'Operation successful'
             };
-            this.renderHTML(this.response.template, {title: 'manage_addons'});
-        }else {
+            this.renderHTML(this.response.template, { title: 'manage_addons' });
+        } else {
             throw new UserFacingError(result.message || 'Operation failed');
         }
+    }
+
+    private async handlePackageOperation(pkg: PackageOperation): Promise<CommandResult> {
+        const packages = await AddonsManagerHandler.model.getActivedPackages();
+        const lockedPackages = await AddonsManagerHandler.model.getLockedPackages();
+
+        const isInstalled = packages.includes(pkg.name) || 
+                          packages.includes(AddonsManagerHandler.model.localPackageName(pkg.name));
+        const isLocked = lockedPackages.includes(pkg.name);
+
+        return PackageValidator.checkPackageIsLocal(pkg.name)
+            ? this.handleLocalPackageOperation(pkg, isInstalled, isLocked)
+            : this.handleRemotePackageOperation(pkg, isInstalled, isLocked);
+    }
+
+    private async handleLocalPackageOperation(pkg: PackageOperation, isInstalled: boolean, isLocked: boolean): Promise<CommandResult> {
+        const localName = AddonsManagerHandler.model.localPackageName(pkg.name);
+        
+        if (localName === '') {
+            return { success: false, message: 'Invalid local package path.' };
+        }
+
+        switch (pkg.action) {
+            case 'add':
+                return AddonsManagerHandler.model.localAdd(pkg.name);
+            case 'update':
+                if (isInstalled) {
+                    return AddonsManagerHandler.model.localUpdate(pkg.name);
+                }
+                return { success: false, message: 'Package is already installed. Use local update instead.' };
+            case 'delete':
+                return AddonsManagerHandler.model.localDelete(pkg.name);
+            default:
+                return { success: false, message: 'Unknown action' };
+        }
+    }
+
+    private async handleRemotePackageOperation(
+        pkg: PackageOperation, 
+        isInstalled: boolean, 
+        isLocked: boolean
+    ): Promise<CommandResult> {
+        switch (pkg.action) {
+            case 'add':
+                if (isInstalled) {
+                    return { success: false, message: 'Package is already installed' };
+                }
+                break;
+            case 'update':
+            case 'delete':
+                if (!isInstalled) {
+                    return { success: false, message: 'Package is not installed' };
+                }
+                break;
+        }
+
+        if (pkg.action === 'delete' && isLocked) {
+            return { success: false, message: 'This package is locked and cannot be removed.' };
+        }
+
+        return AddonsManagerHandler.model.manageAddon(pkg.action, pkg.name, pkg.version);
+    }
+
+    private logOperation(pkg: PackageOperation, result: CommandResult): void {
+        console.log(
+            `${LOG_PREFIX} Action=${pkg.action} Package=${pkg.name} Version=${pkg.version} Result=${JSON.stringify(result)}`
+        );
     }
 }
 
 async function sendCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd });
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (d) => { stdout += d.toString(); });
-    child.stderr?.on('data', (d) => { stderr += d.toString(); });
-    child.on('error', (error) => resolve({ success: false, message: error.message }));
-    child.on('close', (code) => {
-      resolve(code === 0
-        ? { success: true, message: stdout || stderr }
-        : { success: false, message: stderr || stdout || `Exit code ${code}` });
+    return new Promise((resolve) => {
+        const child = spawn(command, args, { cwd });
+        let stdout = '';
+        let stderr = '';
+
+        child.stdout?.on('data', (data) => { stdout += data.toString(); });
+        child.stderr?.on('data', (data) => { stderr += data.toString(); });
+        
+        child.on('error', (error) => {
+            resolve({ success: false, message: error.message });
+        });
+
+        child.on('close', (code) => {
+            if (code === 0) {
+                resolve({ success: true, message: stdout || stderr });
+            } else {
+                resolve({
+                    success: false,
+                    message: stderr || stdout || `Exit code ${code}`
+                });
+            }
+        });
     });
-  });
 }
 
 export default class AddonsManagerService extends Service {
@@ -137,62 +210,150 @@ export default class AddonsManagerService extends Service {
 
     constructor(ctx: Context, config: ReturnType<typeof AddonsManagerService.Config>) {
         super(ctx, 'hydrooj-addons-manager');
-        ctx.Route('manage_addons', '/manage/addons', AddonsManagerHandler, PRIV.PRIV_ALL);
+        ctx.Route('manage_addons', ROUTE_PATH, AddonsManagerHandler, PRIV.PRIV_ALL);
         global.Hydro.ui.inject('ControlPanel', 'manage_addons');
-        init();
-        async function init() {
-            // Model functions
-            async function manageAddon(action: PackageAction, name: string, version: string = ''): Promise<CommandResult> {
-                if (!checkNpmPackageValidity(name)) return {success: false, message: 'Invalid package name'};
-                if (version !== '' && !checkNpmVersionValidity(version)) return {success: false, message: 'Invalid version'};
+        this.initialize(ctx, config);
+    }
 
-                let result: CommandResult = {success: false, message: 'Unknown error'};
-                switch (action) {
-                    case 'delete':
-                        await sendCommand('yarn', ['global', 'remove', name], config.pathToHydro);
-                        const rmRes = await sendCommand('hydrooj', ['addon', 'remove', name], config.pathToHydro);
-                        result = rmRes;
-                        break;
-                    case 'update':
-                        result = await sendCommand('yarn', ['global', 'upgrade', name + (version ? '@' + version : ''), '--latest'], config.pathToHydro);
-                        break;
-                    case 'add':
-                        await sendCommand('yarn', ['global', 'add', name + (version ? '@' + version : '')], config.pathToHydro);
-                        result = await sendCommand('hydrooj', ['addon', 'add', name], config.pathToHydro);
-                        break;
-                }
-                return result;
-            }
-            async function localUpdate(name: string): Promise<CommandResult> {
-                if (!checkPackageIsLocal(name)) return {success: false, message: 'Not a local package'};
-                let result: CommandResult = {success: false, message: 'Unknown error'};
-                result = await sendCommand('git', ['pull', 'origin', 'main'], name);
-                return result;
-            }
-            async function getActivedPackages(): Promise<string[]> {
-                try {
-                    const data = await fs.readFile(config.pathToHydro+'addon.json', 'utf-8');
-                    return JSON.parse(data);
-                } catch (err) {
-                    return [];
-                }
-            }
+    private initialize(ctx: Context, config: ReturnType<typeof AddonsManagerService.Config>): void {
+        const model = this.createModel(config);
+        AddonsManagerHandler.setModel(model);
+    }
 
-            async function getLockedPackages(): Promise<string[]> {
-                try {
-                    const data = await fs.readFile(config.pathToHydro+'addon-locked.json', 'utf-8');
-                    return JSON.parse(data);
-                } catch (err) {
-                    return [];
-                }
-            }
-            const addonsManagerModel: AddonsManagerModel = { 
-                manageAddon: manageAddon,
-                localUpdate: localUpdate,
-                getActivedPackages: () => getActivedPackages(), 
-                getLockedPackages: () => getLockedPackages()
-            };
-            AddonsManagerHandler.setModel(addonsManagerModel);
+    private createModel(config: ReturnType<typeof AddonsManagerService.Config>): AddonsManagerModel {
+        return {
+            manageAddon: (action, name, version = '') => this.manageAddon(action, name, version, config),
+            localUpdate: (name) => this.localUpdate(name, config),
+            localDelete: (name) => this.localDelete(name, config),
+            localAdd: (name) => this.localAdd(name, config),
+            getActivedPackages: () => this.getActivedPackages(config),
+            getLockedPackages: () => this.getLockedPackages(config),
+            localPackageName: (name) => this.extractLocalPackageName(name, config),
+        };
+    }
+
+    private async manageAddon(
+        action: PackageAction, 
+        name: string, 
+        version: string = '',
+        config: ReturnType<typeof AddonsManagerService.Config>
+    ): Promise<CommandResult> {
+        if (!PackageValidator.checkNpmPackageName(name)) {
+            return { success: false, message: 'Invalid package name' };
         }
+        if (version !== '' && !PackageValidator.checkNpmVersion(version)) {
+            return { success: false, message: 'Invalid version' };
+        }
+
+        switch (action) {
+            case 'delete':
+                return this.deleteRemotePackage(name, config);
+            case 'update':
+                return this.updateRemotePackage(name, version, config);
+            case 'add':
+                return this.addRemotePackage(name, version, config);
+            default:
+                return { success: false, message: 'Unknown action' };
+        }
+    }
+
+    private async deleteRemotePackage(name: string, config: ReturnType<typeof AddonsManagerService.Config>): Promise<CommandResult> {
+        const yarnResult = await sendCommand('yarn', ['global', 'remove', name], config.pathToHydro);
+        if(!yarnResult.success) return yarnResult;
+        const result = await sendCommand('hydrooj', ['addon', 'remove', name], config.pathToHydro);
+        return { success: result.success, message: (yarnResult.message || '') + result.message };
+    }
+
+    private async updateRemotePackage(
+        name: string, 
+        version: string,
+        config: ReturnType<typeof AddonsManagerService.Config>
+    ): Promise<CommandResult> {
+        const packageSpec = version ? `${name}@${version}` : name;
+        return sendCommand('yarn', ['global', 'upgrade', packageSpec, '--latest'], config.pathToHydro);
+    }
+
+    private async addRemotePackage(
+        name: string, 
+        version: string,
+        config: ReturnType<typeof AddonsManagerService.Config>
+    ): Promise<CommandResult> {
+        const packageSpec = version ? `${name}@${version}` : name;
+        const yarnResult = await sendCommand('yarn', ['global', 'add', packageSpec], config.pathToHydro);
+        if(!yarnResult.success) return yarnResult;
+        const result = await sendCommand('hydrooj', ['addon', 'add', name], config.pathToHydro);
+        return { success: result.success, message: (yarnResult.message || '') + result.message };
+    }
+
+    private async localUpdate(name: string, config: ReturnType<typeof AddonsManagerService.Config>): Promise<CommandResult> {
+        if (!PackageValidator.checkPackageIsLocal(name)) {
+            return { success: false, message: 'Not a local package' };
+        }
+        const localPath = this.localPackagePath(name, config);
+        return sendCommand('git', ['pull', 'origin', DEFAULT_BRANCH], localPath);
+    }
+
+    private async localAdd(name: string, config: ReturnType<typeof AddonsManagerService.Config>): Promise<CommandResult> {
+        if (!PackageValidator.checkPackageIsLocal(name)) {
+            return { success: false, message: 'Not a local package' };
+        }
+        const deleteResult = await this.localDelete(name, config);
+        const gitResult = await sendCommand('git', ['clone', name], config.pathToHydro + ADDONS_DIR);
+        if (!gitResult.success) {
+            return gitResult;
+        }
+        const localPath = this.localPackagePath(name, config);
+        const result = await sendCommand('hydrooj', ['addon', 'add', localPath], config.pathToHydro);
+        return { success: result.success, message: (gitResult.message || '') + result.message };
+    }
+
+    private async localDelete(name: string, config: ReturnType<typeof AddonsManagerService.Config>): Promise<CommandResult> {
+        if (!PackageValidator.checkPackageIsLocal(name)) {
+            return { success: false, message: 'Not a local package' };
+        }
+        const localPath = this.localPackagePath(name, config);
+        const deleteResult : CommandResult = await fs.rm(localPath, { recursive: true, force: true })
+            .then(() => ({ success: true, message: 'Local package deleted successfully' }))
+            .catch((err) => ({ success: false, message: err.message }));
+        if (!deleteResult.success) {
+            return deleteResult;
+        }
+        const result = await sendCommand('hydrooj', ['addon', 'remove', localPath], config.pathToHydro);
+        return { success: result.success, message: (deleteResult.message || '') + result.message };
+    }
+
+    private async getActivedPackages(config: ReturnType<typeof AddonsManagerService.Config>): Promise<string[]> {
+        try {
+            const data = await fs.readFile(config.pathToHydro + ADDON_JSON, 'utf-8');
+            return JSON.parse(data);
+        } catch {
+            return [];
+        }
+    }
+
+    private async getLockedPackages(config: ReturnType<typeof AddonsManagerService.Config>): Promise<string[]> {
+        try {
+            const data = await fs.readFile(config.pathToHydro + ADDON_LOCKED_JSON, 'utf-8');
+            return JSON.parse(data);
+        } catch {
+            return [];
+        }
+    }
+
+    private extractLocalPackageName(name: string, config: ReturnType<typeof AddonsManagerService.Config>): string {
+        if (!PackageValidator.checkPackageIsLocal(name)) return '';
+        if(PackageValidator.checkPackageIsGitUrl(name)) {
+            const match = name.match(/([^/]+?)(\.git)?$/);
+            return match ? match[1] : '';
+        }
+        if(!name.startsWith(config.pathToHydro + ADDONS_DIR)) {
+            return '';
+        }
+        name = name.replace(config.pathToHydro + ADDONS_DIR, '');
+        return name ? name : '';
+    }
+    private localPackagePath(name: string, config: ReturnType<typeof AddonsManagerService.Config>): string {
+        const localName = this.extractLocalPackageName(name, config);
+        return path.join(config.pathToHydro, ADDONS_DIR, localName);
     }
 }

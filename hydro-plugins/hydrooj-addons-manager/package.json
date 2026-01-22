@@ -1,6 +1,6 @@
 {
   "name": "hydrooj-addons-manager",
-  "version": "0.1.5",
+  "version": "1.0.0",
   "description": "addons manager for hydrooj",
   "main": "index.ts",
   "author": "https://github.com/Bryan0324",
